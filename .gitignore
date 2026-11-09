@@ -1,0 +1,4 @@
+# Local diagnostic evidence may contain network identifiers and logs.
+diagnostics/output/
+diagnostics/**/__pycache__/
+diagnostics/**/*.pyc

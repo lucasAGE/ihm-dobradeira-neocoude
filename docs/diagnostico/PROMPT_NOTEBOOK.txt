@@ -1,0 +1,53 @@
+Trabalhe no projeto Neocoude neste notebook Windows. O caminho esperado é
+E:\Dev\Neocoude; se o checkout estiver em outro lugar, use o caminho real.
+Quero executar a manutenção e os testes preparados para o Raspberry Pi da
+dobradeira pela rede IHM_NEOCOUDE.
+
+Leia primeiro:
+- docs/diagnostico/ATUALIZACAO_EM_CAMPO.md
+- docs/diagnostico/CORRECAO_FEEDBACK.md
+- docs/diagnostico/FICHA_ATUALIZACAO.md
+
+Execute o trabalho autorizado, não fique apenas explicando o que poderia fazer.
+
+1. Confirme que este checkout contém as alterações publicadas. Preserve mudanças
+locais; não use reset --hard ou force. Gere o pacote com
+python diagnostics/build_field_package.py e guarde a pasta informada.
+
+2. Confira se o notebook está conectado à IHM_NEOCOUDE e confirme o IP do
+Raspberry; 192.168.50.1 é uma referência a verificar. Se não houver conexão,
+conclua os testes locais e indique exatamente o acesso que falta.
+
+3. Execute somente os testes em diagnostics/tests, nunca descoberta na raiz.
+Guarde os resultados em uma nova pasta de atendimento dentro de diagnostics/output.
+
+4. Identifique a instalação real: serviço, processo, diretório, Python/venv,
+argumentos, versões e hashes. Use SSH existente sem presumir usuário/senha.
+Confirme que o processo está em modo real, não --stub.
+
+5. Use diagnostics/check_release.py conforme o roteiro. Se houver arquivos
+diferentes, mistura de versões ou leitura insuficiente, investigue antes de copiar.
+
+6. Se precisar atualizar, faça e verifique backup da instalação efetiva, inclusive
+a cópia no notebook. Atualize juntos main_server.py, state_manager.py e
+static/index.html. Antes de parar/iniciar a IHM, confirme comigo que a máquina
+está na condição de manutenção. Avance nas verificações somente leitura enquanto
+essa informação não estiver disponível. Não mude Ladder, rede ou dependências.
+
+7. Abra diagnostics/panel/live.html no navegador e observe até 60 segundos.
+Exporte a coleta. Confira encoder bruto/pulsos/ângulos, entradas E0-E7, saídas
+S0-S7, controles, estados, contadores, qualidade, última leitura válida, erros,
+feedback_version=1, continuidade das mensagens e reinícios do serviço.
+
+8. Verifique que falhas recebidas aparecem como null, Falha de leitura ou
+DESCONHECIDO, preservando zero e false quando forem leituras válidas. Não provoque
+falhas físicas. Não acione motor, pedais, saídas, modos ou setpoints. Deixe testes
+que exigem variação física identificados como pendentes para execução acompanhada.
+
+9. Se a atualização falhar, siga a recuperação usando o backup real. Não inicie
+uma mistura de arquivos, outra instância do servidor ou um segundo mestre Modbus.
+
+Ao terminar, entregue um relatório curto: o que executou, resultados reais,
+arquivos de evidência, versão instalada, sinais recebidos, falhas, pendências,
+estado final do serviço e eventual recuperação. Separe simulação, teste local e
+medição real. Feedback funcionando não significa máquina aprovada para produção.

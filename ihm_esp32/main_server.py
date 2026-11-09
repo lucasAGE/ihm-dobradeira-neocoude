@@ -768,7 +768,9 @@ class IHMServer:
                 heartbeat_counter = 0
 
             # Pega apenas mudanças (deltas)
-            changes = self.state_manager.get_changes(previous_state)
+            current_state = self.state_manager.get_state()
+            changes = {key: value for key, value in current_state.items()
+                       if key not in previous_state or previous_state[key] != value}
 
             # CRÍTICO: Envia heartbeat SEMPRE a cada 3s (keep-alive)
             if send_heartbeat:
@@ -789,7 +791,7 @@ class IHMServer:
 
                 # Envia para todos os clientes
                 disconnected = set()
-                for client in self.clients:
+                for client in tuple(self.clients):
                     try:
                         await client.send(message)
                     except websockets.exceptions.ConnectionClosed as e:
@@ -805,7 +807,7 @@ class IHMServer:
                     self.clients -= disconnected
 
             # Atualiza estado anterior
-            previous_state = self.state_manager.get_state()
+            previous_state = current_state
                 
     async def handle_toggle_mode(self, websocket, data):
         """

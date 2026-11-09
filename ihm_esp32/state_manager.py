@@ -13,7 +13,8 @@ import asyncio
 import copy
 import time
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timezone
+from uuid import uuid4
 from modbus_client import ModbusClientWrapper
 import modbus_map as mm
 from bend_logger import get_bend_logger
@@ -154,285 +155,149 @@ class MachineStateManager:
             'poll_count': 0,
         }
 
-    async def read_encoder(self) -> bool:
-        """
-        Le encoder (16-bit) DIRETO do CLP em 04D6.
+        # A value is unknown until its own read succeeds, including at startup.
+        for key in ('encoder_raw', 'encoder_degrees', 'encoder_degrees_disco',
+                    'encoder_pulses', 'encoder_moving', 'target_angle',
+                    'dobra_atual', 'contador_pecas', 'velocidade_rpm'):
+            self.machine_state[key] = None
+        for group, mapping in (('states', mm.MACHINE_STATES),
+                               ('control_bits', mm.CONTROL_BITS),
+                               ('inputs', mm.DIGITAL_INPUTS),
+                               ('outputs', mm.DIGITAL_OUTPUTS)):
+            self.machine_state[group] = dict.fromkeys(mapping)
+        self.machine_state['angles'] = dict.fromkeys(('bend_1', 'bend_2', 'bend_3'))
+        self.machine_state['leds'] = dict.fromkeys(self.machine_state['leds'])
+        self.machine_state['feedback_version'] = 1
+        self.machine_state['feedback_session'] = uuid4().hex
+        self.machine_state['poll_ok'] = None
+        quality_keys = ['encoder_raw', 'dobra_atual', 'contador_pecas', 'velocidade_rpm']
+        for group in ('inputs', 'outputs', 'states', 'control_bits', 'angles'):
+            quality_keys.extend(f'{group}.{name}' for name in self.machine_state[group])
+        self.machine_state['read_quality'] = {key: {
+            'status': 'not_read', 'last_attempt_at': None, 'last_success_at': None,
+            'success_count': 0, 'error_count': 0, 'last_error': None} for key in quality_keys}
+        self._unknown_machine_state('not_read')
 
-        CORRIGIDO 06/Jan/2026: Conversão encoder → IHM!
-        - Encoder está em 0x04D6 (1238) - APENAS 1 REGISTRO de 16-bit
-        - NÃO é 32-bit! NÃO precisa ler 04D7!
-        - Valor 0-399 pulsos (ou mais se sem sensor zero)
-        - Encoder mede DISCO que gira 2x mais que IHM
-        - Conversão: pulsos → graus DISCO → graus IHM
+    def _unknown_machine_state(self, reason):
+        self.machine_state.update(machine_state_address=None,
+            machine_state_name='DESCONHECIDO', machine_state_color='gray',
+            machine_state_icon='?', machine_state_error=reason,
+            machine_state_description='Estado indisponível: leitura incompleta ou estados inconsistentes.')
 
-        Exemplo:
-        - Encoder: 376 pulsos
-        - Disco: (376/400) × 360° = 338.4°
-        - IHM: 338.4° / 2 = 169.2° ✅
+    async def _read_observation(self, key, address, *, bit=False, quality_store=None):
+        """One existing read, with quality recorded independently of its value.
+
+        The Modbus wrapper reports None for multiple failure types; do not guess
+        CRC/timeout from that sentinel. No retries, new master or writes here.
         """
+        error = None
+        value = None
         try:
-            # Ler contador de pulsos DIRETO (16-bit, apenas 04D6!)
-            pulsos = await asyncio.to_thread(
-                self.client.read_register,
-                mm.ENCODER['ANGLE_MSW']  # Apenas 04D6, não lê 04D7!
-            )
+            reader = self.client.read_coil if bit else self.client.read_register
+            value = await asyncio.to_thread(reader, address)
+            if value is None:
+                error = 'read_failed'
+            elif (type(value) is not bool if bit else
+                  type(value) is not int or not 0 <= value <= 65535):
+                error = 'invalid_value'
+                value = None
+        except Exception as exc:
+            # Exception type is sufficient; do not publish driver/device details.
+            error = 'exception:' + type(exc).__name__
+        now = datetime.now(timezone.utc).isoformat()
+        store = self.machine_state['read_quality'] if quality_store is None else quality_store
+        quality = store.setdefault(key, {
+            'status': 'not_read', 'last_attempt_at': None, 'last_success_at': None,
+            'success_count': 0, 'error_count': 0, 'last_error': None})
+        quality.update(status='error' if error else 'ok', last_attempt_at=now, last_error=error)
+        if error:
+            quality['error_count'] += 1
+        else:
+            quality['success_count'] += 1
+            quality['last_success_at'] = now
+        return value
 
-            if pulsos is not None:
-                # Valor RAW do registro (pode ser > 399 sem sensor zero)
-                self.machine_state['encoder_raw'] = pulsos
+    async def _read_bits(self, group, mapping):
+        # Publish a complete group after the cycle, not a mixture of old/new bits.
+        values = {}
+        qualities = {key: copy.deepcopy(value) for key, value in self.machine_state['read_quality'].items()
+                     if key.startswith(group + '.')}
+        for name, address in mapping.items():
+            values[name] = await self._read_observation(f'{group}.{name}', address, bit=True, quality_store=qualities)
+        self.machine_state[group] = values
+        self.machine_state['read_quality'].update(qualities)
+        return all(value is not None for value in values.values())
 
-                # NORMALIZA para 0-399 com MOD 400
-                # Necessário quando sensor zero está ausente (bancada de teste)
-                # Com sensor: CLP zera automaticamente
-                # Sem sensor: Acumula indefinidamente, precisamos MOD
-                pulsos_normalizados = pulsos % 400
+    def _update_target_angle(self):
+        bend = self.machine_state['dobra_atual']
+        self.machine_state['target_angle'] = (
+            self.machine_state['angles'].get(f'bend_{bend}') if bend in (1, 2, 3) else None)
 
-                # PASSO 1: Conversão pulsos → graus DISCO (0-360°)
-                # 400 pulsos = 360° disco
-                graus_disco = (pulsos_normalizados / 400.0) * 360.0
-
-                # PASSO 2: Conversão disco → IHM (relação 2:1)
-                # Disco gira o dobro do ângulo IHM devido à transmissão
-                graus_ihm = graus_disco / 2.0
-
-                # Atualiza estado (encoder_degrees agora é IHM!)
-                self.machine_state['encoder_degrees'] = graus_ihm
-                self.machine_state['encoder_degrees_disco'] = graus_disco  # Debug
-                self.machine_state['encoder_pulses'] = pulsos_normalizados
-
-                # Detecta movimento
-                if hasattr(self, '_last_encoder_pulsos'):
-                    delta = abs(pulsos - self._last_encoder_pulsos)
-                    self.machine_state['encoder_moving'] = delta > 0
-                else:
-                    self.machine_state['encoder_moving'] = False
-
-                self._last_encoder_pulsos = pulsos
-                return True
+    async def read_encoder(self) -> bool:
+        """Read the existing 16-bit register; preserve the established conversion."""
+        pulses = await self._read_observation('encoder_raw', mm.ENCODER['ANGLE_MSW'])
+        self.machine_state['encoder_raw'] = pulses
+        if pulses is None:
+            for key in ('encoder_pulses', 'encoder_degrees', 'encoder_degrees_disco', 'encoder_moving'):
+                self.machine_state[key] = None
+            self._last_encoder_pulsos = None
             return False
-        except Exception as e:
-            print(f"✗ Erro lendo encoder: {e}")
-            return False
+        normalized = pulses % 400
+        self.machine_state['encoder_pulses'] = normalized
+        self.machine_state['encoder_degrees_disco'] = normalized / 400.0 * 360.0
+        self.machine_state['encoder_degrees'] = normalized / 400.0 * 180.0
+        previous = getattr(self, '_last_encoder_pulsos', None)
+        self.machine_state['encoder_moving'] = pulses != previous if previous is not None else None
+        self._last_encoder_pulsos = pulses
+        return True
 
     async def read_machine_states(self) -> bool:
-        """
-        Le os 8 estados da maquina (M000-M007) e determina qual esta ativo.
-        """
-        try:
-            state_values = {}
-
-            for name, addr in mm.MACHINE_STATES.items():
-                value = await asyncio.to_thread(self.client.read_coil, addr)
-                state_values[addr] = value if value is not None else False
-                self.machine_state['states'][name] = state_values[addr]
-
-            # Determina qual estado esta ativo
-            active_addr = None
-            for addr, value in state_values.items():
-                if value:
-                    active_addr = addr
-                    break
-
-            if active_addr is None:
-                active_addr = mm.MACHINE_STATES['ST_IDLE']
-
-            # Atualiza informacoes do estado ativo
-            state_info = mm.get_state_info(active_addr)
-            self.machine_state['machine_state_address'] = active_addr
-            self.machine_state['machine_state_name'] = state_info['name']
-            self.machine_state['machine_state_description'] = state_info['description']
-            self.machine_state['machine_state_color'] = state_info['color']
-            self.machine_state['machine_state_icon'] = state_info['icon']
-
-            return True
-        except Exception as e:
-            print(f"✗ Erro lendo estados da maquina: {e}")
+        """Report an active state only after a complete, unambiguous scan."""
+        complete = await self._read_bits('states', mm.MACHINE_STATES)
+        active = [mm.MACHINE_STATES[name] for name, value in self.machine_state['states'].items()
+                  if value is True]
+        if not complete or len(active) != 1:
+            reason = 'read_failed' if not complete else ('no_active_state' if not active else 'multiple_active_states')
+            self._unknown_machine_state(reason)
             return False
+        address = active[0]
+        info = mm.get_state_info(address)
+        self.machine_state.update(machine_state_address=address, machine_state_name=info['name'],
+            machine_state_description=info['description'], machine_state_color=info['color'],
+            machine_state_icon=info['icon'], machine_state_error=None)
+        return True
 
     async def read_control_bits(self) -> bool:
-        """
-        Le os bits de controle (B000-B007).
-        """
-        try:
-            for name, addr in mm.CONTROL_BITS.items():
-                value = await asyncio.to_thread(self.client.read_coil, addr)
-                self.machine_state['control_bits'][name] = value if value is not None else False
-
-            return True
-        except Exception as e:
-            print(f"✗ Erro lendo bits de controle: {e}")
-            return False
+        return await self._read_bits('control_bits', mm.CONTROL_BITS)
 
     async def read_inputs(self) -> bool:
-        """
-        Le as entradas digitais (E0-E7).
-        """
-        try:
-            for name, addr in mm.DIGITAL_INPUTS.items():
-                value = await asyncio.to_thread(self.client.read_coil, addr)
-                if name in self.machine_state['inputs']:
-                    self.machine_state['inputs'][name] = value if value is not None else False
-
-            return True
-        except Exception as e:
-            print(f"✗ Erro lendo entradas: {e}")
-            return False
+        return await self._read_bits('inputs', mm.DIGITAL_INPUTS)
 
     async def read_outputs(self) -> bool:
-        """
-        Le as saidas digitais (S0-S7).
-        """
-        try:
-            for name, addr in mm.DIGITAL_OUTPUTS.items():
-                value = await asyncio.to_thread(self.client.read_coil, addr)
-                if name in self.machine_state['outputs']:
-                    self.machine_state['outputs'][name] = value if value is not None else False
-
-            # Atualiza LEDs baseado nas saidas (para compatibilidade)
-            self.machine_state['leds']['LED1'] = self.machine_state['outputs'].get('S4', False)
-            self.machine_state['leds']['LED2'] = self.machine_state['outputs'].get('S5', False)
-            self.machine_state['leds']['LED3'] = self.machine_state['outputs'].get('S6', False)
-
-            return True
-        except Exception as e:
-            print(f"✗ Erro lendo saidas: {e}")
-            return False
+        complete = await self._read_bits('outputs', mm.DIGITAL_OUTPUTS)
+        for led, output in (('LED1', 'S4'), ('LED2', 'S5'), ('LED3', 'S6')):
+            self.machine_state['leds'][led] = self.machine_state['outputs'].get(output)
+        return complete
 
     async def read_work_registers(self) -> bool:
-        """
-        Le os registros de trabalho (dobra atual, contador, velocidade).
-        """
-        try:
-            # Dobra atual (0x0918)
-            dobra = await asyncio.to_thread(
-                self.client.read_register,
-                mm.WORK_REGISTERS['DOBRA_ATUAL']
-            )
-            if dobra is not None:
-                self.machine_state['dobra_atual'] = dobra
-
-            # Contador de pecas (0x0920)
-            pecas = await asyncio.to_thread(
-                self.client.read_register,
-                mm.WORK_REGISTERS['CONTADOR_PECAS']
-            )
-            if pecas is not None:
-                self.machine_state['contador_pecas'] = pecas
-
-            # Velocidade do inversor (0x06E0)
-            vel_raw = await asyncio.to_thread(
-                self.client.read_register,
-                mm.INVERTER['VELOCIDADE_INVERSOR']
-            )
-            if vel_raw is not None:
-                self.machine_state['velocidade_rpm'] = mm.register_to_rpm(vel_raw)
-
-            return True
-        except Exception as e:
-            print(f"✗ Erro lendo registros de trabalho: {e}")
-            return False
-
-    # DESATIVADO 02/Jan/2026: Auto-calibração removida (ajuste manual via ângulos)
-    # async def read_calibration(self) -> bool:
-    #     """
-    #     Le os dados de calibracao (Estado 8).
-    #     """
-    #     try:
-    #         # Verifica se esta em modo calibracao
-    #         calib_active = await asyncio.to_thread(
-    #             self.client.read_coil,
-    #             mm.CALIBRATION['ST_CALIBRACAO']
-    #         )
-    #         self.machine_state['calibration']['active'] = calib_active if calib_active is not None else False
-    #
-    #         # Le etapa atual do sequenciador
-    #         etapa = await asyncio.to_thread(
-    #             self.client.read_register,
-    #             mm.CALIBRATION['ETAPA_CALIB']
-    #         )
-    #         if etapa is not None:
-    #             self.machine_state['calibration']['step_code'] = etapa
-    #             step_info = mm.get_calibration_step_info(etapa)
-    #             self.machine_state['calibration']['step_name'] = step_info['name']
-    #             self.machine_state['calibration']['step_description'] = step_info['description']
-    #             self.machine_state['calibration']['progress'] = step_info['progress']
-    #
-    #         # Le resultados (quando calibracao finalizada)
-    #         if self.machine_state['calibration']['step_code'] >= 70:
-    #             resultado_zero = await asyncio.to_thread(
-    #                 self.client.read_register,
-    #                 mm.CALIBRATION['RESULTADO_ZERO']
-    #             )
-    #             if resultado_zero is not None:
-    #                 self.machine_state['calibration']['resultado_zero'] = resultado_zero
-    #
-    #             resultado_inercia = await asyncio.to_thread(
-    #                 self.client.read_register,
-    #                 mm.CALIBRATION['RESULTADO_INERCIA']
-    #             )
-    #             if resultado_inercia is not None:
-    #                 self.machine_state['calibration']['resultado_inercia'] = resultado_inercia
-    #
-    #             resultado_offset = await asyncio.to_thread(
-    #                 self.client.read_register,
-    #                 mm.CALIBRATION['RESULTADO_OFFSET']
-    #             )
-    #             if resultado_offset is not None:
-    #                 self.machine_state['calibration']['resultado_offset'] = resultado_offset
-    #
-    #         return True
-    #     except Exception as e:
-    #         print(f"✗ Erro lendo calibracao: {e}")
-    #         return False
+        complete = True
+        for key, address in (('dobra_atual', mm.WORK_REGISTERS['DOBRA_ATUAL']),
+                             ('contador_pecas', mm.WORK_REGISTERS['CONTADOR_PECAS']),
+                             ('velocidade_rpm', mm.INVERTER['VELOCIDADE_INVERSOR'])):
+            value = await self._read_observation(key, address)
+            self.machine_state[key] = mm.register_to_rpm(value) if key == 'velocidade_rpm' and value is not None else value
+            complete = complete and value is not None
+        self._update_target_angle()
+        return complete
 
     async def read_angles(self) -> bool:
-        """
-        Le todos os angulos programados e converte para ângulos REAIS.
-
-        CORRIGIDO 08/Fev/2026: Lê dos endereços de ESCRITA (0x0A00+)
-        Os endereços antigos (0x0842+) dependiam do ladder copiar e retornavam 0.
-
-        Endereços de leitura (DECIMAL): 2560, 2562, 2564
-        Conversão: ângulo_real = valor_clp / 2
-        """
-        try:
-            # Angulo 1 (endereço 2114 decimal)
-            ang1 = await asyncio.to_thread(
-                self.client.read_register,
-                mm.BEND_ANGLES['ANGULO_1_READ']  # 2114
-            )
-            if ang1 is not None:
-                self.machine_state['angles']['bend_1'] = mm.clp_to_real_angle(ang1)
-
-            # Angulo 2 (endereço 2116 decimal)
-            ang2 = await asyncio.to_thread(
-                self.client.read_register,
-                mm.BEND_ANGLES['ANGULO_2_READ']  # 2116
-            )
-            if ang2 is not None:
-                self.machine_state['angles']['bend_2'] = mm.clp_to_real_angle(ang2)
-
-            # Angulo 3 (endereço 2118 decimal)
-            ang3 = await asyncio.to_thread(
-                self.client.read_register,
-                mm.BEND_ANGLES['ANGULO_3_READ']  # 2118
-            )
-            if ang3 is not None:
-                self.machine_state['angles']['bend_3'] = mm.clp_to_real_angle(ang3)
-
-            # Angulo alvo = angulo REAL da dobra atual
-            dobra = self.machine_state.get('dobra_atual', 1)
-            if dobra == 1:
-                self.machine_state['target_angle'] = self.machine_state['angles']['bend_1']
-            elif dobra == 2:
-                self.machine_state['target_angle'] = self.machine_state['angles']['bend_2']
-            else:
-                self.machine_state['target_angle'] = self.machine_state['angles']['bend_3']
-
-            return True
-        except Exception as e:
-            print(f"✗ Erro lendo angulos: {e}")
-            return False
+        complete = True
+        for bend in (1, 2, 3):
+            value = await self._read_observation(f'angles.bend_{bend}', mm.BEND_ANGLES[f'ANGULO_{bend}_READ'])
+            self.machine_state['angles'][f'bend_{bend}'] = mm.clp_to_real_angle(value) if value is not None else None
+            complete = complete and value is not None
+        self._update_target_angle()
+        return complete
 
     def _detect_bend_completion(self):
         """
@@ -445,13 +310,22 @@ class MachineStateManager:
         - Registra ângulo programado vs ângulo executado
         - Emite alerta se erro exceder tolerância
         """
-        current_state = self.machine_state.get('machine_state_address', 0x0300)
+        current_state = self.machine_state.get('machine_state_address')
+        required = ('encoder_degrees', 'dobra_atual', 'velocidade_rpm', 'target_angle')
+        directions = self.machine_state.get('control_bits', {})
+        if (current_state is None or any(self.machine_state.get(key) is None for key in required)
+                or any(directions.get(key) is None for key in ('DIR_AVANCO', 'DIR_RECUO'))):
+            # A lost observation is never a completed bend. Do not bridge the gap
+            # with the last angle or fabricate a default angle/speed/direction.
+            self._previous_state = None
+            self._bend_start_time = self._bend_start_angle = self._bend_target_angle = None
+            return
 
         # Detecta início de dobra (entrada em ST_DOBRANDO)
-        if current_state == 0x0302 and self._previous_state != 0x0302:
+        if current_state == 0x0302 and self._previous_state is not None and self._previous_state != 0x0302:
             # Iniciou uma dobra
             self._bend_start_time = time.time()
-            self._bend_start_angle = self.machine_state.get('encoder_degrees', 0.0)
+            self._bend_start_angle = self.machine_state.get('encoder_degrees')
             dobra_atual = self.machine_state.get('dobra_atual', 1)
             self._bend_target_angle = self.machine_state['angles'].get(f'bend_{dobra_atual}', 90.0)
             print(f"🔄 Dobra {dobra_atual} INICIADA (alvo: {self._bend_target_angle}°)")
@@ -461,13 +335,13 @@ class MachineStateManager:
             # Dobra completada - registrar
             if self._bend_start_time is not None:
                 duration_ms = int((time.time() - self._bend_start_time) * 1000)
-                angle_executed = self.machine_state.get('encoder_degrees', 0.0)
-                angle_programmed = self._bend_target_angle or 90.0
+                angle_executed = self.machine_state.get('encoder_degrees')
+                angle_programmed = self._bend_target_angle
                 dobra_atual = self.machine_state.get('dobra_atual', 1)
                 speed_rpm = self.machine_state.get('velocidade_rpm', 5.0)
 
                 # Determina direção
-                dir_avanco = self.machine_state.get('control_bits', {}).get('DIR_AVANCO', False)
+                dir_avanco = self.machine_state.get('control_bits', {}).get('DIR_AVANCO')
                 direction = 'CCW' if dir_avanco else 'CW'
 
                 # Registra a dobra
@@ -499,67 +373,33 @@ class MachineStateManager:
         self._previous_state = current_state
 
     async def poll_once(self) -> bool:
-        """
-        Executa um ciclo completo de polling.
-
-        CORRIGIDO 02/Jan/2026: Polling otimizado para encoder
-        - Encoder SEMPRE lido (crítico para visualização em tempo real)
-        - I/O e estados a cada ciclo durante movimento
-        - Registros estáticos lidos menos frequentemente
-
-        MELHORADO 08/Fev/2026: Detecção de conclusão de dobra para auditoria
-        """
+        """Keep the existing cadence; count attempts separately from valid reads."""
+        self.machine_state['poll_count'] += 1
+        results = []
         try:
-            self.machine_state['poll_count'] += 1
-            self.machine_state['last_update'] = datetime.now().isoformat()
-            self.machine_state['connected'] = self.client.connected
-            self.machine_state['modbus_connected'] = self.client.connected
-
-            # ==========================================
-            # LEITURAS CRÍTICAS (TODO CICLO)
-            # ==========================================
-            # Encoder: SEMPRE lido para tracking em tempo real
-            await self.read_encoder()
-
-            # Estados da máquina: necessário para detectar movimento
-            await self.read_machine_states()
-
-            # NOVO 08/Fev/2026: Detecta conclusão de dobra para auditoria
-            self._detect_bend_completion()
-
-            # Bits de controle: direção, pedal, etc
-            await self.read_control_bits()
-
-            # ==========================================
-            # LEITURAS FREQUENTES (A CADA 2 CICLOS)
-            # ==========================================
-            # Durante movimento, precisamos ler I/O com frequência
+            results.append(await self.read_encoder())
+            results.append(await self.read_machine_states())
+            results.append(await self.read_control_bits())
             if self.machine_state['poll_count'] % 2 == 0:
-                await self.read_inputs()
-                await self.read_outputs()
-                await self.read_work_registers()  # Movido para cá (dobra atual, contador)
-
-            # ==========================================
-            # LEITURAS DE ÂNGULOS - MELHORADO 08/Fev/2026
-            # ==========================================
-            # Ângulos lidos a cada 5 ciclos (~1.5s) ou IMEDIATAMENTE se force_angle_read
-            should_read_angles = (
-                self.force_angle_read or  # Leitura forçada após escrita
-                self.machine_state['poll_count'] % 5 == 0  # A cada 5 ciclos (era 20)
-            )
-
-            if should_read_angles:
-                await self.read_angles()
-                if self.force_angle_read:
-                    print("✅ [StateManager] Leitura forçada de ângulos concluída")
-                    self.force_angle_read = False  # Reset flag
-
-            return True
-        except Exception as e:
-            print(f"✗ Erro critico em poll_once: {e}")
-            import traceback
-            traceback.print_exc()
+                results.append(await self.read_inputs())
+                results.append(await self.read_outputs())
+                results.append(await self.read_work_registers())
+            if self.force_angle_read or self.machine_state['poll_count'] % 5 == 0:
+                results.append(await self.read_angles())
+                self.force_angle_read = False
+            self._detect_bend_completion()
+            self.machine_state['connected'] = bool(self.client.connected)
+            self.machine_state['modbus_connected'] = bool(self.client.connected)
+            self.machine_state['poll_ok'] = all(results)
+            self.machine_state['last_update'] = datetime.now(timezone.utc).isoformat()
+            return self.machine_state['poll_ok']
+        except Exception as exc:
+            print(f"Erro em poll_once: {type(exc).__name__}")
+            self.machine_state['poll_ok'] = False
             self.machine_state['modbus_connected'] = False
+            self._unknown_machine_state('poll_error')
+            self._previous_state = None
+            self._bend_start_time = self._bend_start_angle = self._bend_target_angle = None
             return False
 
     async def start_polling(self):
@@ -591,7 +431,7 @@ class MachineStateManager:
             is_moving = current_state in [0x0302, 0x0303]  # ST_DOBRANDO ou ST_RETORNANDO
 
             # Também considera encoder_moving (detecta movimento fino)
-            encoder_moving = self.machine_state.get('encoder_moving', False)
+            encoder_moving = self.machine_state.get('encoder_moving')
 
             # Usa intervalo rápido se em movimento
             target_interval = fast_interval if (is_moving or encoder_moving) else idle_interval
@@ -616,30 +456,34 @@ class MachineStateManager:
 
         # Achatar angulos para compatibilidade
         if 'angles' in state:
-            state['bend_1_left'] = state['angles'].get('bend_1', 0.0)
-            state['bend_2_left'] = state['angles'].get('bend_2', 0.0)
-            state['bend_3_left'] = state['angles'].get('bend_3', 0.0)
+            state['bend_1_left'] = state['angles'].get('bend_1')
+            state['bend_2_left'] = state['angles'].get('bend_2')
+            state['bend_3_left'] = state['angles'].get('bend_3')
 
         # Alias para compatibilidade
-        state['encoder_angle'] = state.get('encoder_degrees', 0.0)
-        state['speed_class'] = int(state.get('velocidade_rpm', 5))
+        state['encoder_angle'] = state.get('encoder_degrees')
+        speed = state.get('velocidade_rpm')
+        state['speed_class'] = int(speed) if speed is not None else None
 
-        # DESABILITADO 08/Fev/2026: PEDAL_SEGURA sempre False por solicitação do operador
-        # O operador achou incômodo ter que segurar o pedal durante toda a dobra
-        state['pedal_segura'] = False  # SEMPRE False - ignorar valor do CLP
+        # Feedback alias only: publish the actual read, including an unknown value.
+        # This does not write or change the PLC pedal setting.
+        state['pedal_segura'] = state['control_bits'].get('PEDAL_SEGURA')
 
         # Modo (para compatibilidade)
-        state['mode_manual'] = state['states'].get('ST_MANUAL', False)
+        state['mode_manual'] = state['states'].get('ST_MANUAL')
 
         # Encoder: Informações adicionais para visualização profissional
-        state['encoder_pulses'] = state.get('encoder_pulses', 0)  # Pulsos 0-399
-        state['encoder_moving'] = state.get('encoder_moving', False)  # Flag movimento
+        state['encoder_pulses'] = state.get('encoder_pulses')  # Pulsos 0-399
+        state['encoder_moving'] = state.get('encoder_moving')  # Flag movimento
 
         # Sentido de rotação (inferido dos bits de controle)
-        dir_avanco = state.get('control_bits', {}).get('DIR_AVANCO', False)  # CCW
-        dir_recuo = state.get('control_bits', {}).get('DIR_RECUO', False)    # CW
+        dir_avanco = state.get('control_bits', {}).get('DIR_AVANCO')  # CCW
+        dir_recuo = state.get('control_bits', {}).get('DIR_RECUO')    # CW
 
-        if dir_avanco:
+        if dir_avanco is None or dir_recuo is None or (dir_avanco and dir_recuo):
+            state['encoder_direction'] = None
+            state['encoder_direction_symbol'] = '?'
+        elif dir_avanco:
             state['encoder_direction'] = 'CCW'  # Anti-horário
             state['encoder_direction_symbol'] = '⟲'
         elif dir_recuo:

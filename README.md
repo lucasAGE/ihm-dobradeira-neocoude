@@ -1,5 +1,12 @@
 # NEOCOUDE-HD-15 Web HMI
 
+> **Manutenção e auditoria da plataforma (09/11/2026):** comece pelo
+> [kit de diagnóstico somente leitura](diagnostics/README.md) e pelo
+> [relatório de auditoria](docs/diagnostico/AUDITORIA.md).
+> Para a manutenção pela rede, siga o [passo a passo de atualização e teste](docs/diagnostico/ATUALIZACAO_EM_CAMPO.md).
+> Os estados históricos de validação neste repositório não certificam a instalação atual.
+> Não execute os testes antigos contra a máquina: alguns escrevem saídas e registradores.
+
 Modern web-based Human-Machine Interface for the Trillor NEOCOUDE-HD-15 rebar bending machine controlled by Atos MPC4004 PLC.
 
 ## Project Overview

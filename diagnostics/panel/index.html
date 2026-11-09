@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Neocoude · Diagnóstico</title>
+  <link rel="stylesheet" href="panel.css">
+  <script src="feedback.js" defer></script><script src="panel.js" defer></script>
+</head>
+<body>
+  <header><div class="brand">N<span>NEOCOUDE</span></div><span class="badge">MANUTENÇÃO · SOMENTE LEITURA</span></header>
+  <main>
+    <div class="intro"><div><p class="eyebrow">PLATAFORMA / DIAGNÓSTICO</p><h1>Evidências antes de decisões.</h1><p>Importe as coletas do Raspberry e do notebook. Este painel funciona sem internet e não se conecta à máquina.</p></div>
+      <div class="actions"><label class="button" for="files">Importar relatórios JSON</label><input id="files" type="file" accept=".json,application/json" multiple><button id="export" disabled>Exportar evidências</button></div>
+    </div>
+    <p id="message" role="status" aria-live="polite">Nenhuma coleta importada. Valores ausentes permanecem desconhecidos.</p>
+    <div class="notice"><strong>Limite angular não validado.</strong> Uma resposta Modbus ou um ângulo na tela não comprova a parada da dobradeira.</div>
+    <section aria-labelledby="scope-title"><h2 id="scope-title">Origem das evidências</h2><div id="sources" class="sources"><p class="muted">Sem dados da instalação real.</p></div></section>
+    <section aria-labelledby="platform-title"><h2 id="platform-title">Raspberry & Linux <span>Fotografia do momento da coleta</span></h2><div id="platform" class="grid"></div></section>
+    <section aria-labelledby="communication-title"><h2 id="communication-title">Comunicação & encoder <span>Camadas avaliadas separadamente</span></h2><div id="communication" class="grid"></div></section>
+    <section aria-labelledby="signals-title"><h2 id="signals-title">Feedback por sinal</h2><p>Campos recebidos pelo backend, sem garantia de leitura recente. “Última recepção” não é o horário da leitura no CLP. Saídas são bits de comando, não confirmação física do motor.</p><div id="signals" class="signal-table"></div></section>
+    <section aria-labelledby="evidence-title"><h2 id="evidence-title">Registros e rastreabilidade</h2><div id="details"></div></section>
+    <footer>Diagnóstico 0.3.0 · Sem comandos de movimento, escrita Modbus ou alteração de serviços. Revise identificadores de rede e logs antes de compartilhar. <a href="live.html">Monitor de feedback pela rede</a></footer>
+  </main>
+</body>
+</html>

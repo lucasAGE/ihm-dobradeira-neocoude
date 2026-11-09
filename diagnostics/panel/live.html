@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src ws: wss:; img-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Neocoude · Feedback ao vivo</title>
+  <link rel="stylesheet" href="panel.css"><script src="feedback.js" defer></script><script src="live.js" defer></script>
+</head>
+<body>
+  <header><div class="brand">N<span>NEOCOUDE</span></div><span class="badge">RECEPÇÃO · SEM COMANDOS</span></header>
+  <main>
+    <p class="eyebrow">MANUTENÇÃO / FEEDBACK</p><h1>Sinais recebidos da IHM.</h1>
+    <p>No Raspberry Pi 3B/3B+, conecte o notebook por Wi-Fi ou Ethernet. Cabo USB direto não cria acesso aos sensores.</p>
+    <div class="notice"><strong>Leitura indireta pelo backend.</strong> Um bit recebido não comprova leitura recente, estado físico seguro ou funcionamento da parada. Contatos NF e saídas precisam de interpretação elétrica.</div>
+    <div class="connection-controls">
+      <label>IP local do Raspberry<input id="address" value="192.168.50.1" inputmode="decimal" autocomplete="off"></label>
+      <label>Porta WebSocket<input id="port" type="number" min="1" max="65535" value="8765"></label>
+      <label>Tempo de observação (s)<input id="seconds" type="number" min="5" max="120" value="60"></label>
+      <button id="connect">Observar sinais</button><button id="stop" disabled>Encerrar</button><button id="save" disabled>Exportar coleta</button>
+    </div>
+    <p id="live-status" role="status" aria-live="polite">Desconectado. Nenhuma tentativa automática de conexão.</p>
+    <section><h2>Comunicação e encoder</h2><div class="grid" id="live-metrics"></div></section>
+    <section><h2>Entradas, saídas e estados <span>0 e 1 são os valores informados pelo backend</span></h2>
+      <p>“Última recepção” marca quando o campo chegou ao notebook. Campos sem mudança podem ser omitidos nos deltas. Essa data não é a data da leitura no CLP.</p>
+      <div id="signals" class="signal-table"></div>
+    </section>
+    <section><h2>Histórico da observação</h2><pre id="events">Nenhum evento.</pre></section>
+    <footer>Kit 0.3.0 · Um cliente, até 120 s, 1.000 estados e 2 MiB. Atualização visual limitada a 4 vezes/s. Sem reconexão automática, escrita Modbus ou payload de comando. <a href="index.html">Abrir relatórios offline</a></footer>
+  </main>
+</body>
+</html>

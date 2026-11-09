@@ -534,6 +534,12 @@
             background: #2ecc71;
         }
 
+        .toggle-switch.unknown {
+            outline: 2px dashed #f1c40f;
+            opacity: 0.65;
+            cursor: not-allowed;
+        }
+
         .toggle-switch::after {
             content: '';
             position: absolute;
@@ -1376,10 +1382,10 @@
         <div class="tab-content active" id="tab-operacao">
         <!-- Card de Estado da Máquina -->
         <div class="state-card" id="stateCard">
-            <div class="state-icon" id="stateIcon">⏸️</div>
-            <div class="state-name" id="stateName">PARADA</div>
+            <div class="state-icon" id="stateIcon">?</div>
+            <div class="state-name" id="stateName">DESCONHECIDO</div>
             <div class="state-description" id="stateDescription">
-                Máquina parada. Pressione o pedal para iniciar uma operação.
+                Aguardando leitura do CLP. Estado ainda não confirmado.
             </div>
         </div>
 
@@ -1387,9 +1393,9 @@
         <div class="info-grid">
             <div class="info-card">
                 <div class="info-label">Posição Encoder <span id="encoderDirection" style="font-size: 18px;">—</span></div>
-                <div class="info-value encoder" id="encoderValue">0.0°</div>
+                <div class="info-value encoder" id="encoderValue">Sem leitura</div>
                 <div style="font-size: 11px; opacity: 0.6; margin-top: 4px;">
-                    <span id="encoderPulses">0</span> pulsos
+                    <span id="encoderPulses">—</span> pulsos
                 </div>
             </div>
             <!-- NOVO 08/Fev/2026: Máximo atingido para verificar repetibilidade -->
@@ -1402,11 +1408,11 @@
             </div>
             <div class="info-card">
                 <div class="info-label">Ângulo Alvo</div>
-                <div class="info-value" id="targetAngle">0.0°</div>
+                <div class="info-value" id="targetAngle">Sem leitura</div>
             </div>
             <div class="info-card">
                 <div class="info-label">Dobra Atual</div>
-                <div class="info-value" id="currentBend">1</div>
+                <div class="info-value" id="currentBend">—</div>
             </div>
         </div>
 
@@ -1443,7 +1449,7 @@
         <div class="dimmer-section">
             <div class="dimmer-header">
                 <span class="dimmer-label">Velocidade do Motor</span>
-                <span class="dimmer-value"><span id="speedValue">5.0</span> RPM</span>
+                <span class="dimmer-value"><span id="speedValue">Sem leitura</span> RPM</span>
             </div>
             <input type="range" class="dimmer-slider" id="speedSlider" min="0" max="19" step="0.5" value="5">
             <div class="dimmer-marks">
@@ -1631,8 +1637,8 @@
         let ws = null;
         let currentBendEdit = null;
         let currentSpeed = 5.0;
-        let pedalSeguraEnabled = false;
-        let manualModeEnabled = false;
+        let pedalSeguraEnabled = null;
+        let manualModeEnabled = null;
         let lastMessageTime = 0;
         let watchdogTimer = null;
 
@@ -2050,25 +2056,25 @@
 
             // Encoder (CORRIGIDO 02/Jan/2026: visualização profissional)
             // MELHORADO 08/Fev/2026: Rastreia máximo atingido para verificar repetibilidade
-            if (data.encoder_degrees !== undefined && data.encoder_degrees !== null) {
+            if (data.encoder_degrees !== undefined) {
                 const encoderEl = document.getElementById('encoderValue');
                 const currentAngle = data.encoder_degrees;
-                encoderEl.textContent = currentAngle.toFixed(1) + '°';
+                encoderEl.textContent = Number.isFinite(currentAngle) ? currentAngle.toFixed(1) + '°' : 'Sem leitura';
 
                 // Animação de pulsação durante movimento
-                if (data.encoder_moving) {
+                if (Number.isFinite(currentAngle) && data.encoder_moving === true) {
                     encoderEl.classList.add('moving');
                 } else {
                     encoderEl.classList.remove('moving');
                 }
 
                 // NOVO: Rastreia máximo atingido
-                updateMaxEncoder(currentAngle, data.encoder_moving);
+                if (Number.isFinite(currentAngle)) updateMaxEncoder(currentAngle, data.encoder_moving);
             }
 
             // Pulsos do encoder (debug)
             if (data.encoder_pulses !== undefined) {
-                document.getElementById('encoderPulses').textContent = data.encoder_pulses;
+                document.getElementById('encoderPulses').textContent = data.encoder_pulses ?? '—';
             }
 
             // Direção de rotação (seta)
@@ -2078,26 +2084,27 @@
 
             // Dobra atual
             if (data.dobra_atual !== undefined) {
-                document.getElementById('currentBend').textContent = data.dobra_atual;
+                document.getElementById('currentBend').textContent = data.dobra_atual ?? '—';
                 updateAngleCardHighlight(data.dobra_atual);
             }
 
             // Ângulo alvo
             if (data.target_angle !== undefined) {
-                document.getElementById('targetAngle').textContent = data.target_angle.toFixed(1) + '°';
+                document.getElementById('targetAngle').textContent = Number.isFinite(data.target_angle) ? data.target_angle.toFixed(1) + '°' : 'Sem leitura';
             }
 
             // Contador de peças
             if (data.contador_pecas !== undefined) {
                 const pieceEl = document.getElementById('pieceCounter');
-                if (pieceEl) pieceEl.textContent = data.contador_pecas;
+                if (pieceEl) pieceEl.textContent = data.contador_pecas ?? '—';
             }
 
             // Velocidade
             if (data.velocidade_rpm !== undefined) {
                 currentSpeed = data.velocidade_rpm;
-                document.getElementById('speedValue').textContent = data.velocidade_rpm.toFixed(1);
-                document.getElementById('speedSlider').value = data.velocidade_rpm;
+                document.getElementById('speedValue').textContent = Number.isFinite(currentSpeed) ? currentSpeed.toFixed(1) : 'Sem leitura';
+                document.getElementById('speedSlider').disabled = !Number.isFinite(currentSpeed);
+                if (Number.isFinite(currentSpeed)) document.getElementById('speedSlider').value = currentSpeed;
             }
 
             // Ângulos programados - com verificação de sincronização
@@ -2143,7 +2150,10 @@
 
         function updateMachineState(stateName, description, icon) {
             const stateCard = document.getElementById('stateCard');
-            const stateInfo = STATE_INFO[stateName] || STATE_INFO['PARADA'];
+            const stateInfo = STATE_INFO[stateName] || {
+                cssClass: 'state-unknown', name: 'DESCONHECIDO', icon: '?',
+                description: 'Estado indisponível. Não há confirmação de parada.'
+            };
 
             // Remove todas as classes de estado
             stateCard.className = 'state-card';
@@ -2169,11 +2179,18 @@
 
         // NOVO: Atualiza ângulo recebido do servidor e verifica sincronização
         function updateAngleFromServer(bend, value) {
-            if (value === undefined || value === null) return;
+            if (value === undefined) return;
 
             const displayEl = document.getElementById(`angle${bend}`);
             const card = document.getElementById(`angleCard${bend}`);
             if (!displayEl || !card) return;
+            if (!Number.isFinite(value)) {
+                displayEl.textContent = 'Sem leitura';
+                angleSync[bend].clpValue = null;
+                angleSync[bend].confirmed = false;
+                card.classList.remove('synced', 'confirmed');
+                return;
+            }
 
             // Atualiza display
             displayEl.textContent = value.toFixed(1);
@@ -2204,7 +2221,11 @@
         function updateToggle(toggleId, isActive) {
             const toggle = document.getElementById(toggleId);
             if (toggle) {
-                toggle.classList.toggle('active', isActive);
+                const known = typeof isActive === 'boolean';
+                toggle.classList.toggle('active', isActive === true);
+                toggle.classList.toggle('unknown', !known);
+                toggle.setAttribute('aria-disabled', String(!known));
+                toggle.title = known ? '' : 'Sem leitura do CLP';
             }
         }
 
@@ -2290,6 +2311,7 @@
         // ========================================
         function togglePedalSegura() {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            if (typeof pedalSeguraEnabled !== 'boolean') return;
 
             pedalSeguraEnabled = !pedalSeguraEnabled;
             updateToggle('pedalSeguraToggle', pedalSeguraEnabled);
@@ -2304,6 +2326,7 @@
 
         function toggleManualMode() {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            if (typeof manualModeEnabled !== 'boolean') return;
 
             manualModeEnabled = !manualModeEnabled;
             updateToggle('manualModeToggle', manualModeEnabled);
@@ -2780,6 +2803,8 @@
         // ========================================
         // INICIALIZAÇÃO
         // ========================================
+        updateToggle('pedalSeguraToggle', null);
+        updateToggle('manualModeToggle', null);
         connectWebSocket();
     </script>
 </body>

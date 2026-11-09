@@ -1,0 +1,2 @@
+{"request_at":"2026-11-09T12:00:00Z","response_at":"2026-11-09T12:00:00.025Z","request_hex":"01 03 00 00 00 01 84 0a","response_hex":"01 03 02 00 00 b8 44","note":"SYNTHETIC EXAMPLE, NOT MACHINE DATA"}
+{"request_at":"2026-11-09T12:00:01Z","request_hex":"01 03 00 00 00 01 84 0a","error":"timeout","note":"SYNTHETIC EXAMPLE, NOT MACHINE DATA"}

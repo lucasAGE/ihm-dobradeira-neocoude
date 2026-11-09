@@ -1,0 +1,87 @@
+{
+  "schema_version": 1,
+  "release": "feedback-0.3.0",
+  "base_commit": "0c720f569ef9f033e32f008fadd744888bd74f3d",
+  "files": {
+    "main_server.py": {
+      "base": {
+        "sha256": "e3d0fe8efc60da1bdd943b62601d267fd3584787de51202ccea7179003fdccc2",
+        "lf_sha256": "e3d0fe8efc60da1bdd943b62601d267fd3584787de51202ccea7179003fdccc2"
+      },
+      "candidate": {
+        "sha256": "aef97e026fb2f3c24b7ba13c596ea2c853618ce79d3961908d03b14d05d295fb",
+        "lf_sha256": "732eb9d66a2f011455a07cbda2f49158c835481b85ecdd2fd81d7438acfc23d2"
+      }
+    },
+    "state_manager.py": {
+      "base": {
+        "sha256": "9ff7fcbae2bef36ba80e3fccb380fe8c67896c13f711a110bd835403b2a6ac30",
+        "lf_sha256": "9ff7fcbae2bef36ba80e3fccb380fe8c67896c13f711a110bd835403b2a6ac30"
+      },
+      "candidate": {
+        "sha256": "a3dd46e31b4cca27dfeac4e192a566e1d4990c6fd60560181a9a85b8ace6109e",
+        "lf_sha256": "4d6b1dd14daf6763f6109579ac9fc8de907a99ee3f95c87156ecc810b095229f"
+      }
+    },
+    "static/index.html": {
+      "base": {
+        "sha256": "c90265c4f8dadca7e6b57b756492f48d1550ce2241b6632fb26808f2b75198ea",
+        "lf_sha256": "c37ef50deadc41bb0cd481d732dc1fc6c6b883380bd69456ce784ff276211903"
+      },
+      "candidate": {
+        "sha256": "dde7c4d5db6c443cf6476581c63ea16256d82aec90a514eff9983734a5899d4c",
+        "lf_sha256": "f061ba7748dff1833d06f2b885a33774bb5db7e25ada4a9ea01793f8dd13b572"
+      }
+    },
+    "modbus_client.py": {
+      "base": {
+        "sha256": "2c87da8e97594df3066e46a58fa8522dafc7ba411aa7adf925b70d3f9f332060",
+        "lf_sha256": "2c87da8e97594df3066e46a58fa8522dafc7ba411aa7adf925b70d3f9f332060"
+      },
+      "candidate": {
+        "sha256": "f9f2c2d4c993b6d0a14648dd559513e25054a5a2ac188de91116a2fac254c760",
+        "lf_sha256": "2c87da8e97594df3066e46a58fa8522dafc7ba411aa7adf925b70d3f9f332060"
+      }
+    },
+    "modbus_map.py": {
+      "base": {
+        "sha256": "19465874e5403157ba881f5efb617acede0877e9e3d2df470d5ecd51a650bd61",
+        "lf_sha256": "19465874e5403157ba881f5efb617acede0877e9e3d2df470d5ecd51a650bd61"
+      },
+      "candidate": {
+        "sha256": "3283af184d0155fa26769f72caaf98dec627508242a163a6b4e87123e9247ea5",
+        "lf_sha256": "19465874e5403157ba881f5efb617acede0877e9e3d2df470d5ecd51a650bd61"
+      }
+    },
+    "bend_logger.py": {
+      "base": {
+        "sha256": "802268dda6673c31abab2322c2bab544c1e3e9f755b30fbe4406b8e838eade59",
+        "lf_sha256": "802268dda6673c31abab2322c2bab544c1e3e9f755b30fbe4406b8e838eade59"
+      },
+      "candidate": {
+        "sha256": "caebfef3dfcf44adbc332694d80146753e7f49542699b288e751c5cc8bb6730b",
+        "lf_sha256": "802268dda6673c31abab2322c2bab544c1e3e9f755b30fbe4406b8e838eade59"
+      }
+    },
+    "wifi_manager.py": {
+      "base": {
+        "sha256": "9e894a028004b4a5a8e84e6437c4889b51db69bd378d2cfb6519dcbd58664bff",
+        "lf_sha256": "9e894a028004b4a5a8e84e6437c4889b51db69bd378d2cfb6519dcbd58664bff"
+      },
+      "candidate": {
+        "sha256": "7e6b617ba980a8b7d4bd53f2806db383bd94fbe8d71f0ec10ca3606653917a7f",
+        "lf_sha256": "9e894a028004b4a5a8e84e6437c4889b51db69bd378d2cfb6519dcbd58664bff"
+      }
+    },
+    "requirements.txt": {
+      "base": {
+        "sha256": "03e0ce562522684716c9a0bb756b19b9cba7875741b10afa0978c07b596cc859",
+        "lf_sha256": "03e0ce562522684716c9a0bb756b19b9cba7875741b10afa0978c07b596cc859"
+      },
+      "candidate": {
+        "sha256": "4b8bc31928a59239d34029d9a85b9635b9c1c3a44833f6ebec110888892268a5",
+        "lf_sha256": "03e0ce562522684716c9a0bb756b19b9cba7875741b10afa0978c07b596cc859"
+      }
+    }
+  }
+}
